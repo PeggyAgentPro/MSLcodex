@@ -123,6 +123,8 @@ SET asp_location = 'S',
     asp_purprice = ...
 ```
 
+腳本開始時會先檢查每個 Y2 `(pri_customerid, pri_assy)` 是否只對應一個六位小數的 `pri_clcost`（`NULL` 也視為一種狀態）。若同一鍵有多個價格，腳本會列出衝突資料並在任何更新前中止。必須先釐清正確價格，不可任選 `MIN`、`MAX` 或任一筆繼續更新。
+
 執行後確認腳本輸出的 remaining 檢查，預期如下：
 
 ```text
@@ -151,10 +153,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN asp s
+LEFT JOIN asp s
     ON s.asp_id = a.pri_customerid
    AND s.asp_vendormaterialno = a.pri_assy
-WHERE a.pri_clcost <> ROUND(s.asp_purprice, 6)
+WHERE s.asp_id IS NULL
+   OR a.pri_clcost <> ROUND(s.asp_purprice, 6)
    OR (a.pri_clcost IS NULL AND s.asp_purprice IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND s.asp_purprice IS NULL)
 
@@ -172,10 +175,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN aspnum n
+LEFT JOIN aspnum n
     ON n.aspnum_id = a.pri_customerid
    AND n.aspnum_num = a.pri_assy
-WHERE a.pri_clcost <> ROUND(n.aspnum_price, 6)
+WHERE n.aspnum_id IS NULL
+   OR a.pri_clcost <> ROUND(n.aspnum_price, 6)
    OR (a.pri_clcost IS NULL AND n.aspnum_price IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND n.aspnum_price IS NULL);
 ```
@@ -185,10 +189,29 @@ WHERE a.pri_clcost <> ROUND(n.aspnum_price, 6)
 - `asp = 0` 且 `aspnum = 0`：同步完成。
 - `aspnum > 0`：先確認 skip-asp 是否完成，必要時只處理 `aspnum` 收斂問題。
 - `asp > 0`：進入下一節，建立 `asp` 修復候選清單並小批次更新。
+- 若差異來自缺少對應的 `asp`／`aspnum` 列，現有復原腳本不會自動新增資料；需先依正式建檔流程補齊，不可將缺列當成價格更新處理。
 
 ## 5. 建立 asp 修復候選清單
 
 若 `asp` 與 `pri_clcost` 仍有差異，先建立候選清單。`impact_pri_rows` 用來估計該組客戶料號可能牽動多少 `pri` 資料，後續批次更新時會優先處理影響較小的資料。
+
+建立候選清單前，必須先確認來源唯一；若查詢回傳任何資料，停止操作並先釐清正確價格：
+
+```sql
+SELECT
+    pri_customerid,
+    pri_assy,
+    COUNT(*) AS pri_rows,
+    COUNT(DISTINCT ROUND(pri_clcost, 6)) AS distinct_nonnull_prices,
+    SUM(CASE WHEN pri_clcost IS NULL THEN 1 ELSE 0 END) AS null_price_rows,
+    MIN(ROUND(pri_clcost, 6)) AS min_price,
+    MAX(ROUND(pri_clcost, 6)) AS max_price
+FROM pri
+WHERE pri_newcostchk = 'Y2'
+GROUP BY pri_customerid, pri_assy
+HAVING COUNT(DISTINCT ROUND(pri_clcost, 6)) > 1
+    OR (COUNT(pri_clcost) > 0 AND COUNT(pri_clcost) < COUNT(*));
+```
 
 ```sql
 IF OBJECT_ID('tempdb..#asp_fix_candidates') IS NOT NULL
@@ -318,10 +341,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN asp s
+LEFT JOIN asp s
     ON s.asp_id = a.pri_customerid
    AND s.asp_vendormaterialno = a.pri_assy
-WHERE a.pri_clcost <> ROUND(s.asp_purprice, 6)
+WHERE s.asp_id IS NULL
+   OR a.pri_clcost <> ROUND(s.asp_purprice, 6)
    OR (a.pri_clcost IS NULL AND s.asp_purprice IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND s.asp_purprice IS NULL);
 ```
@@ -403,10 +427,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN asp s
+LEFT JOIN asp s
     ON s.asp_id = a.pri_customerid
    AND s.asp_vendormaterialno = a.pri_assy
-WHERE a.pri_clcost <> ROUND(s.asp_purprice, 6)
+WHERE s.asp_id IS NULL
+   OR a.pri_clcost <> ROUND(s.asp_purprice, 6)
    OR (a.pri_clcost IS NULL AND s.asp_purprice IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND s.asp_purprice IS NULL)
 
@@ -424,10 +449,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN aspnum n
+LEFT JOIN aspnum n
     ON n.aspnum_id = a.pri_customerid
    AND n.aspnum_num = a.pri_assy
-WHERE a.pri_clcost <> ROUND(n.aspnum_price, 6)
+WHERE n.aspnum_id IS NULL
+   OR a.pri_clcost <> ROUND(n.aspnum_price, 6)
    OR (a.pri_clcost IS NULL AND n.aspnum_price IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND n.aspnum_price IS NULL);
 ```

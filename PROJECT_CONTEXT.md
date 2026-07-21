@@ -68,6 +68,7 @@ This made the system look like it was never finishing, especially after the init
 
 - Do not repeatedly run the full original cost update while `asp` / `aspnum` are out of sync.
 - Use `run_updatepriclcost2_skip_asp.sql` first when recovering from a failed or interrupted cost update, so `pri` and `aspnum` can converge without immediately triggering `asp`.
+- Abort the recovery when one Y2 `(pri_customerid, pri_assy)` key resolves to multiple six-decimal `pri_clcost` values; never let `asp` or `aspnum` choose an arbitrary source price.
 - After `pri` and `aspnum` converge, update `asp` separately in small batches.
 - Use `impact_pri_rows ASC` when batching `asp` updates so smaller-impact rows run first.
 - If the last few rows are slow, reduce `@BatchSize` to `1`.
@@ -77,6 +78,8 @@ This made the system look like it was never finishing, especially after the init
 ## Useful Verification Query
 
 Use this to confirm `asp` and `aspnum` match Y2 `pri_clcost`:
+
+The `LEFT JOIN` is intentional: a missing `asp` or `aspnum` target row is also counted as not synchronized.
 
 ```sql
 SELECT
@@ -91,10 +94,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN asp s
+LEFT JOIN asp s
     ON s.asp_id = a.pri_customerid
    AND s.asp_vendormaterialno = a.pri_assy
-WHERE a.pri_clcost <> ROUND(s.asp_purprice, 6)
+WHERE s.asp_id IS NULL
+   OR a.pri_clcost <> ROUND(s.asp_purprice, 6)
    OR (a.pri_clcost IS NULL AND s.asp_purprice IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND s.asp_purprice IS NULL)
 
@@ -112,10 +116,11 @@ FROM
     FROM pri
     WHERE pri_newcostchk = 'Y2'
 ) a
-JOIN aspnum n
+LEFT JOIN aspnum n
     ON n.aspnum_id = a.pri_customerid
    AND n.aspnum_num = a.pri_assy
-WHERE a.pri_clcost <> ROUND(n.aspnum_price, 6)
+WHERE n.aspnum_id IS NULL
+   OR a.pri_clcost <> ROUND(n.aspnum_price, 6)
    OR (a.pri_clcost IS NULL AND n.aspnum_price IS NOT NULL)
    OR (a.pri_clcost IS NOT NULL AND n.aspnum_price IS NULL);
 ```
@@ -129,12 +134,7 @@ aspnum    0
 
 ## Open Items / TODO
 
-- Decide whether to commit the new recovery scripts and SOP files:
-  - `diagnose_live_cost_update.sql`
-  - `diagnose_odi_update_fanout.sql`
-  - `run_updatepriclcost2_skip_asp.sql`
-  - `updatepriclcost_deadlock_manual_recovery_sop.md`
-  - `PROJECT_CONTEXT.md`
+- Review and commit the validation hardening added after the initial recovery commit.
 - Review whether the production `asp` trigger should be optimized, especially the part that led to heavy `UPDATE pld` work.
 - Review whether `updatepriclcost` should be made more resilient to deadlocks, for example with smaller internal batches, retry handling, or a safer separation between cost calculation and `asp` propagation.
 - Review `odi` update fanout risk, especially joins involving `pri_aspupdate1`.
@@ -167,4 +167,5 @@ As of the end of this thread:
 - Manual recovery completed.
 - Official cost update completed.
 - `asp` and `aspnum` synchronization checks were both `0`.
-- New SOP and recovery scripts are staged, with newer reviewed fixes still unstaged; no commit or push has been performed.
+- Recovery scripts and SOP were committed locally; the validation hardening and handoff corrections are currently uncommitted.
+- Local `main` is ahead of `origin/main`; no push has been performed.

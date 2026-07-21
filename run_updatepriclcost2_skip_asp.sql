@@ -37,6 +37,51 @@ SELECT 'run_updatepriclcost2_skip_asp_start' AS step_name,
        SYSDATETIME() AS run_time;
 
 -------------------------------------------------------------------------------
+-- Preflight: asp / aspnum are keyed by customer + assy, so every Y2 key must
+-- resolve to exactly one six-decimal pri_clcost (NULL is also a distinct state).
+-- Abort before making any changes when the source is ambiguous.
+-------------------------------------------------------------------------------
+IF EXISTS
+(
+    SELECT 1
+    FROM pri
+    WHERE pri_newcostchk = 'Y2'
+    GROUP BY pri_customerid, pri_assy
+    HAVING COUNT(DISTINCT ROUND(pri_clcost, 6)) > 1
+        OR
+        (
+            COUNT(pri_clcost) > 0
+            AND COUNT(pri_clcost) < COUNT(*)
+        )
+)
+BEGIN
+    SELECT pri_customerid,
+           pri_assy,
+           COUNT(*) AS pri_rows,
+           COUNT(DISTINCT ROUND(pri_clcost, 6)) AS distinct_nonnull_prices,
+           SUM(CASE WHEN pri_clcost IS NULL THEN 1 ELSE 0 END) AS null_price_rows,
+           MIN(ROUND(pri_clcost, 6)) AS min_price,
+           MAX(ROUND(pri_clcost, 6)) AS max_price
+    FROM pri
+    WHERE pri_newcostchk = 'Y2'
+    GROUP BY pri_customerid, pri_assy
+    HAVING COUNT(DISTINCT ROUND(pri_clcost, 6)) > 1
+        OR
+        (
+            COUNT(pri_clcost) > 0
+            AND COUNT(pri_clcost) < COUNT(*)
+        )
+    ORDER BY pri_customerid, pri_assy;
+
+    RAISERROR (
+        'Recovery aborted: one or more Y2 customer/assy keys have ambiguous pri_clcost values.',
+        16,
+        1
+    );
+    RETURN;
+END;
+
+-------------------------------------------------------------------------------
 -- 1. Same as updatepriclcost2: Y2 normal pri_cost
 -------------------------------------------------------------------------------
 SET @step_start = SYSDATETIME();
@@ -315,10 +360,11 @@ FROM
     FROM pri WITH (NOLOCK)
     WHERE pri_newcostchk = 'Y2'
 ) AS a01
-JOIN aspnum WITH (NOLOCK)
+LEFT JOIN aspnum WITH (NOLOCK)
     ON aspnum_id = a01.pri_customerid
    AND aspnum_num = a01.pri_assy
-WHERE ROUND(a01.pri_clcost, 6) <> ROUND(aspnum_price, 6)
+WHERE aspnum_id IS NULL
+   OR ROUND(a01.pri_clcost, 6) <> ROUND(aspnum_price, 6)
    OR (a01.pri_clcost IS NULL AND aspnum_price IS NOT NULL)
    OR (a01.pri_clcost IS NOT NULL AND aspnum_price IS NULL);
 

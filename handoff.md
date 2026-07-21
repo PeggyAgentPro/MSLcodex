@@ -5,25 +5,22 @@
 ## 目前狀態
 
 - SQL Server 成本更新事故已完成恢復，最終驗證為 `asp = 0`、`aspnum = 0`。
-- Git 分支為 `main`，與 `origin/main` 同步。
-- 已暫存 5 個新檔案，尚未 commit 或 push。
-- `updatepriclcost_deadlock_manual_recovery_sop.md` 同時有未暫存的新版修訂。
-- 已在 macOS 工作區修正 `aspnum_price` 為 `NULL` 時不會更新、remaining 驗證漏算的問題。
-- 已修正 `aspnum` 寫入 6 位小數、卻以未 ROUND 原值比較所造成的重複更新／remaining 不收斂風險。
-- 已同步修正 SOP 與 `PROJECT_CONTEXT.md` 的 `asp` / `aspnum` NULL-safe 比較；尚未重新暫存。
+- Git 分支為 `main`，本機比 `origin/main` 多 2 個 commit，尚未 push。
+- 工作區正在修正驗證 JOIN、來源價格唯一性防護及交接狀態，尚未 commit。
+- `asp`／`aspnum` 驗證改用 `LEFT JOIN`，缺少目標列也會列為不同步。
+- recovery script 在任何更新前檢查同一 Y2 `(pri_customerid, pri_assy)` 是否存在多個六位小數價格；有衝突即列出明細並中止。
 
 ## 未完成工作
 
-- 將 SOP 最新工作區版本重新暫存前，先審查差異。
+- 審查並驗證本次 JOIN、來源唯一性與文件狀態修正。
 - 若能連線生產資料庫，將 recovery script 與實際 `dbo.updatepriclcost2` 再比對一次。
 
 ## 阻斷與注意事項
 
-- 先前 Windows `G:` 虛擬磁碟的 patch helper 阻斷不適用於目前 macOS 工作區；本次已可正常套用修正。
 - 未經使用者確認，不執行 Git commit、push 或 pull。
 
 ## 下次開工
 
-1. 審查 SQL、SOP 與 `PROJECT_CONTEXT.md` 的 NULL-safe 比較差異。
+1. 在測試或生產唯讀查詢確認 Y2 每個 `(pri_customerid, pri_assy)` 的價格唯一性。
 2. 若可連線生產資料庫，將 recovery script 與實際 `dbo.updatepriclcost2` 比對。
-3. 確認暫存範圍後，再由使用者決定是否 commit。
+3. 確認本次差異後，再由使用者決定是否 commit 與 push。
